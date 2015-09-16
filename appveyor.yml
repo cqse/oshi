@@ -1,5 +1,7 @@
 version: '{build}'
 os: Windows Server 2012
+init:
+- ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
 install:
   - ps: |
       Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -11,12 +13,50 @@ install:
         [System.IO.Compression.ZipFile]::ExtractToDirectory("C:\maven-bin.zip", "C:\maven")
       }
   - cmd: SET PATH=C:\maven\apache-maven-3.3.3\bin;%JAVA_HOME%\bin;%PATH%
-  - cmd: SET MAVEN_OPTS=-XX:MaxPermSize=2g -Xmx4g
-  - cmd: SET JAVA_OPTS=-XX:MaxPermSize=2g -Xmx4g
+  - cmd: SET MAVEN_OPTS=-XX:MaxPermSize=2g -Xmx4g -Djna.nosys=true -Djna.debug_load=true
+  - cmd: SET JAVA_OPTS=-XX:MaxPermSize=2g -Xmx4g -Djna.nosys=true -Djna.debug_load=true
 build_script:
   - mvn clean compile --batch-mode
 test_script:
-  - mvn test --batch-mode
+- ps: |
+      $Computername = $env:COMPUTERNAME
+      $ADSIComp = [adsi]"WinNT://$Computername"
+      $NewUser = $ADSIComp.Create('User','user') 
+      $secure_string_pwd = convertto-securestring "P@ssW0rD!" -asplaintext -force
+      $mycreds = New-Object System.Management.Automation.PSCredential("user", $secure_string_pwd)
+      $BSTR = [system.runtime.interopservices.marshal]::SecureStringToBSTR($secure_string_pwd)
+      $_password = [system.runtime.interopservices.marshal]::PtrToStringAuto($BSTR)
+      $NewUser.SetPassword(($_password))
+      $NewUser.SetInfo()
+      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+      $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+      $pinfo.FileName = "C:\maven\apache-maven-3.3.3\bin\mvn.cmd"
+      $pinfo.RedirectStandardError = $true
+      $pinfo.RedirectStandardOutput = $true
+      $pinfo.UseShellExecute = $false
+      $pinfo.Arguments = "test --batch-mode"
+      $pinfo.UserName = "user"
+      $pinfo.Password = $secure_string_pwd
+      $pinfo.WorkingDirectory = "C:\projects\oshi"
+      $p = New-Object System.Diagnostics.Process
+      $p.StartInfo = $pinfo
+      $p.Start() | Out-Null
+      $p.WaitForExit()
+      $stdout = $p.StandardOutput.ReadToEnd()
+      $stderr = $p.StandardError.ReadToEnd()
+      Write-Host "stdout: $stdout"
+      Write-Host "stderr: $stderr"
+      Write-Host "exit code: " + $p.ExitCode
+# $p = Start-Process cmd.exe -Credential $mycreds -PassThru -NoNewWindow -ArgumentList "/C mvn test --batch-mode"
+#$p.WaitForExit()
+#$stdout = $p.StandardOutput.ReadToEnd()
+#$stderr = $p.StandardError.ReadToEnd()
+#Write-Host "stdout: $stdout"
+#Write-Host "stderr: $stderr"
+#Write-Host "exit code: " + $p.ExitCode
+
 cache:
   - C:\maven\
-  - C:\Users\appveyor\.m
+  - C:\Users\appveyor\.m2
+#on_finish:
+#- ps: $blockRdp = $true; iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
